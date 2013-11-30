@@ -1,0 +1,11 @@
+# Routes
+# This file defines all application routes (Higher priority routes first)
+# ~~~~
+
+# Home page
+GET     /                          controllers.Application.grid(tableName="fruit")
+GET     /gridData/:tableName       controllers.Application.gridData(tableName :String)
+POST    /gridEdit/:tableName       controllers.Application.gridEdit(tableName :String)
+
+# Map static resources from the /public folder to the /assets URL path
+GET     /assets/*file               controllers.Assets.at(path="/public", file)

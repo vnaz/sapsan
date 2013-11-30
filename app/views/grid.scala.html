@@ -1,0 +1,32 @@
+@(gridModel: jqGrid)
+
+@main("Index") {
+	
+	<table id="navgrid" width="100%"></table>
+	<br/>
+	<div id="pagernav"></div>
+	
+	<script lang="text/javascript">
+		jQuery("#navgrid").jqGrid({
+			url:'/gridData/fruit',
+			editurl:"/gridEdit/fruit",
+			datatype: "xml",
+			height: 250,
+			width: 100,
+		   	colNames:@Html(gridModel.getColumnNames),
+		   	colModel:@Html(gridModel.getColumnModel),
+		   	caption: "Table",
+		   	pager: '#pagernav',
+		   	autowidth: true,
+		}).navGrid('#pagernav');
+
+		/*jQuery("#navgrid").jqGrid('navGrid','#pagernav',
+				{}, //options
+				{height:280,reloadAfterSubmit:false}, // edit options
+				{height:280,reloadAfterSubmit:false}, // add options
+				{reloadAfterSubmit:false}, // del options
+				{} // search options
+		);*/
+	</script>
+	
+}
