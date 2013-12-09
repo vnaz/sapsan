@@ -11,7 +11,7 @@ class Value (private val _column :Column,  private val _record :Record, private 
     def update(new_value:Any) {_value = new_value}
     
     def value = _value
-    def value_=(x: Any) { if (x!=_value) {_record.isModified=true; _value = x} }
+    def value_=(x: Any) { if (x!=_value) { _value = x; _record.isModified=isModified;} }
     def oldValue = _oldValue
     def resetValue(x:Any) = {_value = x; _oldValue = x}
     def rollbackValue() = {_value = _oldValue}
@@ -77,8 +77,8 @@ class Record(private val _table:Table) extends collection.mutable.HashMap[String
         if (tmp != "") s"WHERE $tmp" else "" 
     }
     
-    def getUpdateSQL():String = s"UPDATE ${_table.getSQLTableName} SET ${this.getSQLUpdateColumnValuePair.mkString(", ")} ${this.getSQLWhere}"
-    def getInsertSQL():String = s"INSERT INTO ${_table.getSQLTableName}(${this.getSQLInsertColumns.mkString(", ")}) VALUES (${this.getSQLInsertValues.mkString(", ")})"
+    def getUpdateSQL():String = if (isModified) { s"UPDATE ${_table.getSQLTableName} SET ${this.getSQLUpdateColumnValuePair.mkString(", ")} ${this.getSQLWhere}" } else ""
+    def getInsertSQL():String = if (isNew) { s"INSERT INTO ${_table.getSQLTableName}(${this.getSQLInsertColumns.mkString(", ")}) VALUES (${this.getSQLInsertValues.mkString(", ")})" } else ""
     
 }
 
@@ -218,6 +218,7 @@ class Filters(private val _table:Table) extends collection.mutable.MutableList[F
     
     def getSQL():String = (for (f <- this) yield (f.getSQL)).mkString(" AND ")
 }
+
 
 
 class Column(private val _table:Table, val name:String, val isId:Boolean = false, val typeName:String="VARCHAR"){
