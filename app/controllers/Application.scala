@@ -17,7 +17,7 @@ object Application extends Controller {
   
   def gridData(tableName :String) = Action {
       val table = Schema.tables(tableName)
-      table.loadValues
+      table.records.load
       Ok( table.jqGrid.getXmlForGrid )
   }
    
@@ -25,15 +25,9 @@ object Application extends Controller {
       val table = Schema.tables(tableName)
       val data = request.body.asFormUrlEncoded.getOrElse(Map()).map { case (k, v) => (k, if (v.length>0) { v(0) } ) }
       
-      table.selectRecord( data.getOrElse("id", null) )
-      println( data.getOrElse("id", null) )
-      println( table.curRecord )
-      for (col <- data.keys){
-          table.setValue(col, data(col))
-          table.saveCurrentRecord()
-      }
       
-      //data.get("oper")
+      val rec = table.records.getOrCreateRecord(data)
+      rec.save()
       
       Ok("")
   }

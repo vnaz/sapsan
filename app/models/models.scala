@@ -2,7 +2,7 @@ package models
 
 object Friut extends Table("fruit", "sapsan") {
     val id   = new Column(this, "id", true, "INT")
-    val name = new Column(this, "name", true, "VARCHAR")
+    val name = new Column(this, "name", false, "VARCHAR")
 }
 
 object Schema {

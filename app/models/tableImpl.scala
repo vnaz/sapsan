@@ -16,13 +16,16 @@ class Value (private val _column :Column,  private val _record :Record, private 
     def resetValue(x:Any) = {_value = x; _oldValue = x}
     def rollbackValue() = {_value = _oldValue}
     
-    def isModified = (_oldValue != _value)
+    def isModified = (_oldValue.toString != _value.toString)
     
     def getSQLValue :String = _column.getSQLValue(_value)
+    def getSQLOldValue :String = _column.getSQLValue(_oldValue)
     def getSQLName = _column.getSQLName
     
     def getColumn = _column
     def getRecord = _record
+    
+    override def toString() = _value.toString 
 }
 
 class Record(private val _table:Table) extends collection.mutable.HashMap[String, Value] {
@@ -37,8 +40,12 @@ class Record(private val _table:Table) extends collection.mutable.HashMap[String
             this(key).value = value
             Some(value)
         }else{
-            val tmp = new Value(_table.column(key), this, value)
-            super.put(key, tmp)
+            if ( _table.columns.contains(key) ){
+                val tmp = new Value(_table.column(key), this, value)
+                super.put(key, tmp)
+            }else{
+                Some(value)
+            }
         }
     }
     
@@ -53,18 +60,20 @@ class Record(private val _table:Table) extends collection.mutable.HashMap[String
             val st = conn.createStatement()
             var SQL:String = ""
             if (this.isNew) { SQL = this.getInsertSQL } else if (this.isModified) { SQL = this.getUpdateSQL }
-            println(SQL)
-            st.execute( SQL )
+            if (SQL != ""){
+                println(SQL)
+                st.execute( SQL )
+            }
         }
     }
     
-    def getSQLUpdateColumnValuePair = for ( (n, v) <- this) yield ( if (v.isModified) s"${v.getSQLName} = ${v.getSQLValue}" )
+    def getSQLUpdateColumnValuePair = for ( (n, v) <- this if v.isModified) yield (s"${v.getSQLName} = ${v.getSQLValue}" )
     
     def getSQLInsertColumns = for ( (n, v) <- columns) yield ( s"${v.getSQLName}" )
-    def getSQLInsertValues  = for ( (n, v) <- columns) yield ( this.getOrElse(n, "") )
+    def getSQLInsertValues  = for ( (n, v) <- columns) yield ( v.getSQLValue( this.getOrElse(n, "") ) )
     
-    def getSQLWhere = { 
-        val tmp = (for (x <- this.columns.idColumns) yield (x.getSQLName + " = " + this(x.name).getSQLValue)).mkString(" AND ") 
+    def getSQLWhere = {
+        val tmp = ( for (x <- this.columns.getIdColumns ) yield (x.getSQLName + " = " + this(x.name).getSQLOldValue) ).mkString(" AND ") 
         if (tmp != "") s"WHERE $tmp" else "" 
     }
     
@@ -85,9 +94,28 @@ class Records(private val _table:Table) extends collection.mutable.MutableList[R
     
     def reset() { mapRecords.clear; this.clear; curRecord = null; }
     
-    def selectRecord(id:Any) :Record = {
-        curRecord = mapRecords.getOrElse(id, new Record(_table) )
-        curRecord
+    def selectRecord(rec :Record)  = { curRecord = rec; curRecord }
+    
+    def getRecord(id:Any) :Record = {
+        mapRecords.getOrElse(id, new Record(_table) )
+    }
+    
+    
+    def getRecordKey(rec :Map[String,Any]) :String = {
+        val ids = columns.getIdColumns
+        if ( ids.forall( c => rec.contains(c.name) ) ){
+            (for (c <- ids) yield rec( c.name )).mkString(";")
+        }else{
+            ""
+        }
+    }
+    
+    def getOrCreateRecord(data :Map[String, Any]) :Record = {
+        val rec = getRecord( getRecordKey(data) )
+        for (col <- data.keys){
+            rec.put(col, data(col))
+        }
+        rec
     }
     
     def save() {
@@ -123,8 +151,10 @@ class Records(private val _table:Table) extends collection.mutable.MutableList[R
             }
             
             var rowNum=0
+            var tmpRecord :Record = null
             while (rs.next()) {
-                curRecord = new Record(_table)
+                tmpRecord = new Record(_table)
+                tmpRecord.isNew = false
                 for ( (i, c) <- columns.seqColumns) {
                     val value :Any = c.typeName match {
                         case "DECIMAL"  => rs.getBigDecimal(i)
@@ -135,17 +165,15 @@ class Records(private val _table:Table) extends collection.mutable.MutableList[R
                         case "VARCHAR"  => rs.getString(i)
                         case _          => rs.getString(i)
                     }
-                    
-                    curRecord(c.name) = new Value(c, curRecord, value)
+                    tmpRecord(c.name) = new Value(c, tmpRecord, value)
                 }
-                this += curRecord
-                mapRecords(rowNum) = curRecord
+                this += tmpRecord
+                mapRecords( getRecordKey( tmpRecord.toMap[String,Value] ) ) = tmpRecord
                 rowNum += 1
             }
         }
         
-    }
-    
+    }  
     
     def getSQLLimit = if(limit>0) {s"LIMIT $limit" + (if(offset>0) {s" OFFSET $offset"} else "") } else {""} 
     def getSQLColumns = {
@@ -153,14 +181,43 @@ class Records(private val _table:Table) extends collection.mutable.MutableList[R
         if (cols != "") cols else "*"
     }
     def getSQLWhere = { 
-        val tmp = (for ( (n,v) <- this.columns) yield (v.getSQLName + " = " + curRecord(v.name).getSQLValue)).mkString(" AND ") 
-        if (tmp != "") s"WHERE $tmp" else "" 
+        val tmp = _table.filters.getSQL() 
+        if (tmp != "") s"WHERE $tmp" else ""
     }
     def getSelectSQL():String = s"SELECT ${getSQLColumns} FROM ${_table.getSQLTableName} ${this.getSQLWhere} ${getSQLLimit}" 
     
     
 }
 
+
+class Filter(private val _table:Table, val value:Any, val column:Column = null, val operator:String = null){
+    def getSQL:String = {
+        if (column!=null && operator !=null){
+            column.getSQLName + operator + column.getSQLValue(value)
+        }else{
+            value.toString
+        }
+    }
+}
+
+class Filters(private val _table:Table) extends collection.mutable.MutableList[Filter] {
+    
+    def columns = _table.columns
+
+    def resetFilters = this.clear
+    
+    def addFilter(column:String, value:Any, operator:String=null) { 
+        if ( columns.contains(column) ){ addFilter( columns(column), value, operator ) }
+    }
+    
+    def addFilter(column:Column, value:Any, operator:String) {
+        if (value != null && value.toString != ""){
+                this += new Filter(_table, value, column, operator )
+        }
+    }
+    
+    def getSQL():String = (for (f <- this) yield (f.getSQL)).mkString(" AND ")
+}
 
 
 class Column(private val _table:Table, val name:String, val isId:Boolean = false, val typeName:String="VARCHAR"){
@@ -169,7 +226,7 @@ class Column(private val _table:Table, val name:String, val isId:Boolean = false
     def getSQLName = s"`$name`"
     
     def getSQLValue(arg:Any) :String = arg match { 
-        case v:String => s"'$v'".replace("'", "\\'")
+        case v:String => "'" + v.replace("'", "\\'") + "'"
         case v:Int    => v.toString
         case _        => getSQLValue(arg.toString)
     }
@@ -183,13 +240,15 @@ class Columns(private val _table:Table) extends collection.mutable.HashMap[Strin
     val seqColumns = new collection.mutable.HashMap[Int, Column]()
     val idColumns = new collection.mutable.MutableList[Column]()
     
+    def getIdColumns :List[Column] = if (idColumns.length > 0) idColumns.toList else getSortedColumns
+    
     private var lastOrd = 0
     
     def addColumn(name :String, column :Column) {
         lastOrd += 1
         this(name) = column 
         seqColumns(lastOrd) = column
-        if (column.isId) { idColumns :+ this }
+        if (column.isId) { idColumns += column }
     }
     
     def getByOrd(ord: Int) = seqColumns(ord) 
@@ -205,29 +264,18 @@ class Table(val tableName:String, val _schema:String = ""){
     
     def schema = _schema match { case "" => ""; case _ => _schema + "." }
     
-    def columns = new Columns(this)
+    val columns = new Columns(this)
     def column(ord :Int) = columns.getByOrd(ord)
     def column(name :String) = columns(name)
-        
-    def records = new Records(this)
+    
+    val records = new Records(this)
     def record: Record = records.curRecord
+    
+    val filters = new Filters(this)
     
     def setValue(column :String, value :Any) { 
         if (columns.contains(column)){
             record(column) = new Value(columns(column), record, value)
-        }
-    }
-    
-    
-
-    
-    private var filters = collection.mutable.Seq[String]()
-    
-    def resetFilter { filters = collection.mutable.Seq() }
-    def addFilter(colName:String, operator:String, value :Any) { 
-        if ( columns.contains(colName) && Seq("=", "!=" , "<>", ">", "<", "IN", "LIKE").contains(operator) ){
-            val col = columns(colName)
-            filters :+ s"${col.getSQLName} ${operator} ${col.getSQLValue(value)}"
         }
     }
     
